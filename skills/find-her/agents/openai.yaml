@@ -1,0 +1,4 @@
+interface:
+  display_name: "Find Her"
+  short_description: "Builds respectful dating and脱单 plans"
+  default_prompt: "Use $find-her to help me build a practical dating plan from my city, relationship goal, strengths, current social channels, and repeated sticking points."

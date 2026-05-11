@@ -1,0 +1,25 @@
+{
+  "name": "find-her",
+  "slug": "find-her",
+  "version": "0.1.0",
+  "summary": "Respectful dating-coach skill for finding a compatible romantic partner through self-assessment, channel strategy, profile improvement, communication coaching, and practical脱单 planning.",
+  "description": "Help users improve romantic prospects, find compatible women or partners, choose dating channels, rewrite profiles and messages, plan dates, evaluate fit, and build respectful脱单 routines.",
+  "keywords": [
+    "find-her",
+    "dating",
+    "relationship",
+    "romance",
+    "girlfriend",
+    "dating-coach",
+    "脱单",
+    "恋爱",
+    "找女朋友",
+    "约会",
+    "亲密关系"
+  ],
+  "compatibility": {
+    "openclaw": true,
+    "hermes": true,
+    "format": "AgentSkills SKILL.md"
+  }
+}
