@@ -1,0 +1,17 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "groupings": [
+    {
+      "title": "Shopping & Commerce",
+      "skills": [
+        "jd-shopping"
+      ]
+    },
+    {
+      "title": "Life",
+      "skills": [
+        "find-her"
+      ]
+    }
+  ]
+}
