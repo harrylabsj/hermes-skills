@@ -17,6 +17,16 @@ hermes skills search 京东
 hermes skills install <owner>/hermes-skills/skills/jd-shopping
 ```
 
+## Privacy Gate
+
+Before publishing any skill to GitHub, ClawHub, Hermes, or another public registry, run:
+
+```bash
+python3 scripts/privacy_check.py skills/<skill-name>
+```
+
+The check fails on user-local absolute paths, private config files, non-placeholder email addresses, likely secrets, private keys, and optional custom denylist entries from `.privacy-denylist`.
+
 ## Skills
 
 | Skill | What It Does | Install |
