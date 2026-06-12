@@ -1,0 +1,23 @@
+{
+  "name": "llm-wiki-weread-book-maintenance",
+  "slug": "llm-wiki-weread-book-maintenance",
+  "version": "1.1.0",
+  "summary": "WeRead-to-llm-wiki maintenance skill for complete 书摘 backfill, source mapping repair, and excerpt-count validation.",
+  "description": "Maintain and validate llm-wiki book entity pages compiled from WeRead or 微信读书 note exports. Use this skill to preserve full highlights and comments in archival 书摘 sections while keeping LLM-generated synthesis concise.",
+  "keywords": [
+    "llm-wiki",
+    "weread",
+    "wechat-reading",
+    "微信读书",
+    "book-notes",
+    "knowledge-management",
+    "obsidian",
+    "excerpt-audit",
+    "wiki-maintenance"
+  ],
+  "compatibility": {
+    "openclaw": true,
+    "hermes": true,
+    "format": "AgentSkills SKILL.md"
+  }
+}

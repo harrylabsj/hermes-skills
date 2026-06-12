@@ -1,0 +1,18 @@
+{
+  "name": "llm-wiki-weread-book-maintenance",
+  "version": "1.1.0",
+  "description": "Maintain and validate llm-wiki book pages compiled from WeRead or 微信读书 note exports. Backfill complete archival 书摘 sections, preserve highlights and comments, separate deterministic extraction from LLM synthesis, audit missing excerpts, deepen book pages, and repair source mappings, indexes, and wikilinks.",
+  "keywords": [
+    "llm-wiki",
+    "weread",
+    "wechat-reading",
+    "微信读书",
+    "book-notes",
+    "knowledge-management",
+    "obsidian",
+    "excerpt-audit",
+    "wiki-maintenance"
+  ],
+  "author": "Hermes Agent",
+  "license": "MIT"
+}
