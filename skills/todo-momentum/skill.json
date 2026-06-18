@@ -1,0 +1,20 @@
+{
+  "name": "todo-momentum",
+  "version": "0.1.0",
+  "description": "Break overwhelming todos and stalled obligations into tiny physical next actions, 3-minute starts, 5-minute starts, daily momentum plans, and lightweight shame-free check-ins for Codex, OpenClaw, Hermes, and ClawHub-style agent skill ecosystems.",
+  "keywords": [
+    "todo",
+    "productivity",
+    "procrastination",
+    "execution",
+    "micro-actions",
+    "habits",
+    "daily-planning",
+    "openclaw",
+    "hermes",
+    "codex",
+    "agent-skills"
+  ],
+  "author": "Haidong + AI Agents",
+  "license": "MIT"
+}
