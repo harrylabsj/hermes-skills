@@ -1,7 +1,7 @@
 {
   "name": "token-cost-guard",
   "slug": "token-cost-guard",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "summary": "Realtime OpenClaw token cost monitor with threshold-based alert reports.",
   "description": "Monitor OpenClaw agent session token usage, price DeepSeek/Kimi/GPT model calls, compare current cost against the previous snapshot, and generate or send an alert when spend exceeds a configured threshold.",
   "keywords": [

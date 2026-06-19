@@ -400,7 +400,7 @@ def top_rows(title: str, buckets: dict[str, Bucket], limit: int = 8) -> list[str
 
 def render_report(snapshot: Snapshot, result: AlertResult, args: argparse.Namespace) -> str:
     lines = [
-        "# OpenClaw Token Cost Guard",
+        "# Token Cost Guard",
         "",
         f"- Status: {result.status.upper()}",
         f"- Date: {snapshot.date}",
