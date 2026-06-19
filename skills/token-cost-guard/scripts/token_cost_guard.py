@@ -314,6 +314,71 @@ def usage_int(usage: dict[str, Any], *keys: str) -> int:
     return 0
 
 
+def number_value(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        if isinstance(value, str):
+            value = value.strip().replace(",", "")
+            if not value:
+                return None
+        number = float(value)
+    except Exception:
+        return None
+    if number < 0:
+        return None
+    return number
+
+
+def cost_amount_to_cny(amount: Any, currency: Any, usd_cny: float, default_currency: str = "cny") -> float | None:
+    number = number_value(amount)
+    if number is None:
+        return None
+    normalized = str(currency or default_currency).strip().lower()
+    if normalized in ("usd", "us$", "$"):
+        return number * usd_cny
+    if normalized in ("cny", "rmb", "yuan", "renminbi", "¥", "cn¥", "cnh"):
+        return number
+    return None
+
+
+def native_cost_cny(value: Any, usd_cny: float, default_currency: str = "cny") -> float | None:
+    if isinstance(value, dict):
+        currency = value.get("currency") or value.get("unit")
+        for key in ("cny", "costCny", "cost_cny", "totalCny", "total_cny", "amountCny", "amount_cny"):
+            if key in value:
+                return cost_amount_to_cny(value.get(key), "cny", usd_cny)
+        for key in ("usd", "costUsd", "cost_usd", "totalUsd", "total_usd", "amountUsd", "amount_usd"):
+            if key in value:
+                return cost_amount_to_cny(value.get(key), "usd", usd_cny)
+        for key in ("total", "amount", "value", "cost"):
+            if key in value:
+                converted = cost_amount_to_cny(value.get(key), currency, usd_cny, default_currency=default_currency)
+                if converted is not None:
+                    return converted
+        return None
+    return cost_amount_to_cny(value, default_currency, usd_cny, default_currency=default_currency)
+
+
+def usage_native_cost_cny(usage: dict[str, Any], usd_cny: float) -> float | None:
+    for key in ("cost", "costTotal", "cost_total", "totalCost", "total_cost"):
+        if key in usage:
+            converted = native_cost_cny(usage.get(key), usd_cny, default_currency="cny")
+            if converted is not None:
+                return converted
+    for key in ("costCny", "cost_cny", "totalCostCny", "total_cost_cny", "estimatedCostCny", "estimated_cost_cny", "actualCostCny", "actual_cost_cny"):
+        if key in usage:
+            converted = cost_amount_to_cny(usage.get(key), "cny", usd_cny)
+            if converted is not None:
+                return converted
+    for key in ("costUsd", "cost_usd", "totalCostUsd", "total_cost_usd", "estimatedCostUsd", "estimated_cost_usd", "actualCostUsd", "actual_cost_usd"):
+        if key in usage:
+            converted = cost_amount_to_cny(usage.get(key), "usd", usd_cny)
+            if converted is not None:
+                return converted
+    return None
+
+
 def compute_cost_cny(
     model: str,
     miss: int,
@@ -382,7 +447,9 @@ def collect_openclaw_snapshot(args: argparse.Namespace, prices: dict[str, dict[s
                         continue
 
                     usage_records += 1
-                    cost_cny = compute_cost_cny(model, miss, hit, output, prices, message.get("provider"))
+                    cost_cny = usage_native_cost_cny(usage, float(args.usd_cny))
+                    if cost_cny is None:
+                        cost_cny = compute_cost_cny(model, miss, hit, output, prices, message.get("provider"))
                     if cost_cny is None:
                         unpriced.setdefault(model, Bucket()).add(miss, hit, output, total_tokens, 0.0)
                         continue
@@ -453,6 +520,40 @@ def load_hermes_session_sources(hermes_home: Path, start: datetime, end: datetim
     return {str(session_id): str(source or "") for session_id, source in rows if session_id}
 
 
+def load_hermes_session_billing(hermes_home: Path, start: datetime, end: datetime) -> dict[str, dict[str, Any]]:
+    db = hermes_home / "state.db"
+    if not db.exists():
+        return {}
+    try:
+        con = sqlite3.connect(str(db))
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT id, source, estimated_cost_usd, actual_cost_usd
+            FROM sessions
+            WHERE started_at >= ? AND started_at < ?
+            """,
+            (start.timestamp(), end.timestamp()),
+        ).fetchall()
+        con.close()
+    except Exception:
+        return {}
+
+    billing: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        session_id = str(row["id"] or "")
+        if not session_id:
+            continue
+        cost_usd = number_value(row["actual_cost_usd"])
+        if cost_usd is None or cost_usd <= 0:
+            cost_usd = number_value(row["estimated_cost_usd"])
+        billing[session_id] = {
+            "source": str(row["source"] or ""),
+            "cost_usd": cost_usd if cost_usd is not None and cost_usd > 0 else None,
+        }
+    return billing
+
+
 def add_usage_record(
     *,
     group: str,
@@ -490,6 +591,7 @@ def collect_hermes_from_logs(
     hermes_home: Path,
     date: str,
     prices: dict[str, dict[str, float]],
+    usd_cny: float,
     total: Bucket,
     by_model: dict[str, Bucket],
     by_agent: dict[str, Bucket],
@@ -497,8 +599,10 @@ def collect_hermes_from_logs(
 ) -> tuple[int, int]:
     start, end = hermes_day_window(date)
     session_sources = load_hermes_session_sources(hermes_home, start, end)
-    usage_records = 0
-    priced_records = 0
+    session_billing = load_hermes_session_billing(hermes_home, start, end)
+    records: list[dict[str, Any]] = []
+    session_tokens: dict[str, int] = {}
+
     for line in iter_hermes_log_lines(hermes_home / "logs"):
         match = HERMES_API_RE.search(line)
         if not match:
@@ -520,17 +624,43 @@ def collect_hermes_from_logs(
         miss = max(0, prompt - hit)
         group = session_sources.get(session_id) or infer_hermes_source(session_id)
 
-        usage_records += 1
+        records.append(
+            {
+                "session_id": session_id,
+                "group": group,
+                "provider": provider,
+                "model": model,
+                "miss": miss,
+                "hit": hit,
+                "output": output,
+                "total_tokens": total_tokens,
+            }
+        )
+        session_tokens[session_id] = session_tokens.get(session_id, 0) + max(0, total_tokens)
+
+    priced_records = 0
+    for record in records:
+        session_id = record["session_id"]
+        billing = session_billing.get(session_id) or {}
+        if not record["group"]:
+            record["group"] = billing.get("source") or infer_hermes_source(session_id)
+
+        cost_cny = None
+        session_cost_usd = billing.get("cost_usd")
+        denominator = session_tokens.get(session_id, 0)
+        if session_cost_usd is not None and denominator > 0:
+            cost_cny = float(session_cost_usd) * usd_cny * (record["total_tokens"] / denominator)
+
         if add_usage_record(
-            group=group,
-            provider=provider,
-            model=model,
-            miss=miss,
-            hit=hit,
-            output=output,
-            total_tokens=total_tokens,
+            group=record["group"],
+            provider=record["provider"],
+            model=record["model"],
+            miss=record["miss"],
+            hit=record["hit"],
+            output=record["output"],
+            total_tokens=record["total_tokens"],
             calls=1,
-            cost_cny=None,
+            cost_cny=cost_cny,
             prices=prices,
             total=total,
             by_model=by_model,
@@ -538,7 +668,7 @@ def collect_hermes_from_logs(
             unpriced=unpriced,
         ):
             priced_records += 1
-    return usage_records, priced_records
+    return len(records), priced_records
 
 
 def collect_hermes_from_state_db(
@@ -630,8 +760,17 @@ def collect_hermes_snapshot(args: argparse.Namespace, prices: dict[str, dict[str
     by_agent: dict[str, Bucket] = {}
     unpriced: dict[str, Bucket] = {}
 
-    usage_records, priced_records = collect_hermes_from_logs(hermes_home, date, prices, total, by_model, by_agent, unpriced)
-    source_detail = f"{hermes_home}/logs/agent.log*"
+    usage_records, priced_records = collect_hermes_from_logs(
+        hermes_home,
+        date,
+        prices,
+        float(args.usd_cny),
+        total,
+        by_model,
+        by_agent,
+        unpriced,
+    )
+    source_detail = f"{hermes_home}/logs/agent.log* + state.db billing"
     if usage_records == 0:
         usage_records, priced_records = collect_hermes_from_state_db(
             hermes_home,

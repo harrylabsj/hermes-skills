@@ -1,9 +1,9 @@
 {
   "name": "token-cost-guard",
   "slug": "token-cost-guard",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "summary": "Realtime agent token cost monitor with threshold-based alert reports.",
-  "description": "Monitor OpenClaw or Hermes agent token usage from the active runtime's own records, price DeepSeek/Kimi/GPT model calls, compare current cost against the previous snapshot, and generate or send an alert when spend exceeds a configured threshold.",
+  "description": "Monitor OpenClaw or Hermes agent token usage from the active runtime's own records, prefer native billing fields when present, price DeepSeek/Kimi/GPT model calls as a fallback, compare current cost against the previous snapshot, and generate or send an alert when spend exceeds a configured threshold.",
   "keywords": [
     "openclaw",
     "hermes",
@@ -24,7 +24,7 @@
   },
   "scripts": {
     "main": "scripts/token_cost_guard.py",
-    "description": "Stdlib-only CLI for computing OpenClaw token costs and alerting on cost deltas."
+    "description": "Stdlib-only CLI for computing OpenClaw or Hermes token costs and alerting on cost deltas."
   },
   "author": "harrylabsj",
   "license": "MIT"

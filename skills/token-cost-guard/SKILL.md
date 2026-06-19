@@ -53,8 +53,8 @@ python3 skills/token-cost-guard/scripts/token_cost_guard.py \
 ## Behavior
 
 - `--source auto` selects Hermes when running under Hermes (`HERMES_*` environment or `~/.hermes/skills` path), otherwise OpenClaw.
-- OpenClaw source reads `~/.openclaw/agents/*/sessions/*.jsonl`.
-- Hermes source reads `~/.hermes/logs/agent.log*` API-call usage lines, then falls back to `~/.hermes/state.db` session aggregates when logs have no matching records.
+- OpenClaw source reads `~/.openclaw/agents/*/sessions/*.jsonl` and prefers native cost fields such as `usage.cost.total`, `usage.costCny`, or `usage.costUsd` before estimating from token prices.
+- Hermes source reads `~/.hermes/logs/agent.log*` API-call usage lines and uses Hermes `state.db` session costs (`actual_cost_usd` or `estimated_cost_usd`) when present, allocated across log calls by token share. It falls back to `state.db` session aggregates when logs have no matching records.
 - Defaults to today's Asia/Shanghai date.
 - Computes cost by model and by runtime group (`Agents` for OpenClaw, `Hermes Sources` such as `cron`, `weixin`, or `cli` for Hermes).
 - Compares current total cost with the previous snapshot in the selected runtime's `token-cost-guard/state.json`.
@@ -75,11 +75,13 @@ Environment variables:
 - `HERMES_STATE_DIR` or `HERMES_DATA_DIR`: when present and source is Hermes, default state/report storage goes under `<that-dir>/token-cost-guard`.
 - `OPENCLAW_TOKEN_COST_THRESHOLD_CNY`: default absolute alert threshold.
 - `OPENCLAW_TOKEN_COST_THRESHOLD_PERCENT`: default percent alert threshold.
-- `TOKEN_COST_GUARD_USD_CNY` or `TOKEN_REPORT_USD_CNY`: USD/CNY conversion for Hermes `state.db` fallback costs.
+- `TOKEN_COST_GUARD_USD_CNY` or `TOKEN_REPORT_USD_CNY`: USD/CNY conversion for Hermes `state.db` costs and any OpenClaw native USD cost fields.
 
 Hermes tap metadata lives in `skill.json`; ClawHub/OpenClaw marketplace metadata lives in `clawhub.json`.
 
 ## Pricing
+
+Cost source priority is: runtime-native billing fields first, then the price table after applying any `--pricing-file` overrides.
 
 The script embeds current DeepSeek official CNY prices per 1M tokens:
 
@@ -87,7 +89,7 @@ The script embeds current DeepSeek official CNY prices per 1M tokens:
 - `deepseek-v4-flash`: cache hit 0.02, cache miss 1, output 2
 - `deepseek-chat` and `deepseek-reasoner` are treated as v4-flash compatibility aliases.
 
-Known local CNY estimates are included for Kimi models. Unknown models are listed as unpriced unless OpenClaw recorded a usable `usage.cost.total`.
+Known local CNY estimates are included for Kimi models. Unknown models are listed as unpriced unless OpenClaw or Hermes recorded a usable native cost.
 
 Use `--pricing-file <json>` to override or add prices. JSON shape:
 
