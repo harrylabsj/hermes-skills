@@ -40,6 +40,16 @@ Run every 60 seconds:
 python3 skills/token-cost-guard/scripts/token_cost_guard.py --watch-interval 60 --threshold-cny 20
 ```
 
+Check the previous hour and stay silent unless the hour exceeds 10 CNY:
+
+```bash
+python3 skills/token-cost-guard/scripts/token_cost_guard.py \
+  --period previous-hour \
+  --alert-mode total \
+  --threshold-cny 10 \
+  --quiet-ok
+```
+
 Send an alert through OpenClaw when the threshold is exceeded:
 
 ```bash
@@ -50,17 +60,40 @@ python3 skills/token-cost-guard/scripts/token_cost_guard.py \
   --target <recipient-or-chat-id>
 ```
 
+OpenClaw hourly command alert example:
+
+```bash
+python3 ~/.openclaw/skills/token-cost-guard/scripts/token_cost_guard.py \
+  --source openclaw \
+  --period previous-hour \
+  --alert-mode total \
+  --threshold-cny 10 \
+  --quiet-ok \
+  --send-openclaw \
+  --channel feishu \
+  --target <feishu-open-id-or-chat-id>
+```
+
+Hermes hourly script alert example:
+
+```bash
+~/.hermes/scripts/hermes_hourly_alert.sh
+```
+
 ## Behavior
 
 - `--source auto` selects Hermes when running under Hermes (`HERMES_*` environment or `~/.hermes/skills` path), otherwise OpenClaw.
 - OpenClaw source reads `~/.openclaw/agents/*/sessions/*.jsonl` and prefers native cost fields such as `usage.cost.total`, `usage.costCny`, or `usage.costUsd` before estimating from token prices.
 - Hermes source reads `~/.hermes/logs/agent.log*` API-call usage lines and uses Hermes `state.db` session costs (`actual_cost_usd` or `estimated_cost_usd`) when present, allocated across log calls by token share. It falls back to `state.db` session aggregates when logs have no matching records.
 - Defaults to today's Asia/Shanghai date.
+- Supports `--period day`, `--period current-hour`, and `--period previous-hour`; use `previous-hour` for hourly cron alerts.
 - Computes cost by model and by runtime group (`Agents` for OpenClaw, `Hermes Sources` such as `cron`, `weixin`, or `cli` for Hermes).
 - Compares current total cost with the previous snapshot in the selected runtime's `token-cost-guard/state.json`.
 - Alerts when either condition is true:
   - absolute cost delta is greater than `--threshold-cny`
   - percentage delta is greater than `--threshold-percent`
+- With `--alert-mode total`, alerts when the current time window's known cost is greater than `--threshold-cny`; this is the recommended mode for "last hour exceeded budget" cron jobs.
+- With `--quiet-ok`, prints nothing when the run is OK; this is useful for Hermes `cron --no-agent --script` delivery.
 - Writes Markdown reports to the selected runtime's `token-cost-guard/reports/`.
 
 ## Hermes Compatibility

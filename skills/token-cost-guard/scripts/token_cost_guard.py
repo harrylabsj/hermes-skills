@@ -208,6 +208,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--openclaw-dir", default=str(openclaw_dir))
     parser.add_argument("--hermes-home", default=str(hermes_home))
     parser.add_argument("--date", help="Date to inspect in YYYY-MM-DD, default today in Asia/Shanghai.")
+    parser.add_argument(
+        "--period",
+        choices=("day", "current-hour", "previous-hour"),
+        default="day",
+        help="Time window to inspect. Use previous-hour for hourly cron alerts.",
+    )
     parser.add_argument("--agent", action="append", help="Agent id to include. Repeatable. Defaults to all agents with sessions.")
     parser.add_argument("--pricing-file", help="JSON price override file.")
     parser.add_argument(
@@ -218,11 +224,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--threshold-cny", type=float, default=default_threshold)
     parser.add_argument("--threshold-percent", type=float, default=default_percent)
+    parser.add_argument(
+        "--alert-mode",
+        choices=("delta", "total"),
+        default="delta",
+        help="delta compares with the previous snapshot; total alerts when the current window exceeds --threshold-cny.",
+    )
     parser.add_argument("--state-file")
     parser.add_argument("--reports-dir")
     parser.add_argument("--init-only", action="store_true", help="Write baseline without alerting.")
     parser.add_argument("--no-state-write", action="store_true", help="Do not update state file.")
     parser.add_argument("--always-report", action="store_true", help="Print report even when no alert fires.")
+    parser.add_argument("--quiet-ok", action="store_true", help="Print nothing when status is OK and no alert fires.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     parser.add_argument("--watch-interval", type=float, help="Run continuously every N seconds.")
     parser.add_argument("--send-openclaw", action="store_true", help="Send alert via `openclaw message send`.")
@@ -245,6 +258,24 @@ def target_date(args: argparse.Namespace) -> str:
     if args.date:
         return args.date
     return datetime.now(TZ_SHANGHAI).date().isoformat()
+
+
+def target_window(args: argparse.Namespace) -> tuple[datetime, datetime, str]:
+    if args.period == "day":
+        start_date = datetime.fromisoformat(target_date(args)).date()
+        start = datetime(start_date.year, start_date.month, start_date.day, tzinfo=TZ_SHANGHAI)
+        return start, start + timedelta(days=1), start.date().isoformat()
+
+    now = datetime.now(TZ_SHANGHAI)
+    current_hour = now.replace(minute=0, second=0, microsecond=0)
+    if args.period == "previous-hour":
+        start = current_hour - timedelta(hours=1)
+        end = current_hour
+    else:
+        start = current_hour
+        end = current_hour + timedelta(hours=1)
+    label = f"{start.strftime('%Y-%m-%dT%H%M%z')}..{end.strftime('%Y-%m-%dT%H%M%z')}"
+    return start, end, label
 
 
 def load_prices(pricing_file: str | None) -> dict[str, dict[str, float]]:
@@ -276,7 +307,7 @@ def discover_agents(openclaw_dir: Path, requested: list[str] | None) -> list[str
     return agents
 
 
-def parse_event_date(value: Any) -> str | None:
+def parse_event_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
     try:
@@ -284,12 +315,19 @@ def parse_event_date(value: Any) -> str | None:
             number = float(value)
             if number > 10_000_000_000:
                 number = number / 1000.0
-            return datetime.fromtimestamp(number, timezone.utc).astimezone(TZ_SHANGHAI).date().isoformat()
+            return datetime.fromtimestamp(number, timezone.utc).astimezone(TZ_SHANGHAI)
         text = str(value)
         dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        return dt.astimezone(TZ_SHANGHAI).date().isoformat()
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=TZ_SHANGHAI)
+        return dt.astimezone(TZ_SHANGHAI)
     except Exception:
         return None
+
+
+def parse_event_date(value: Any) -> str | None:
+    dt = parse_event_datetime(value)
+    return dt.date().isoformat() if dt else None
 
 
 def normalize_model(provider: str | None, model: str | None) -> str | None:
@@ -401,7 +439,7 @@ def compute_cost_cny(
 
 def collect_openclaw_snapshot(args: argparse.Namespace, prices: dict[str, dict[str, float]]) -> Snapshot:
     openclaw_dir = Path(args.openclaw_dir).expanduser()
-    date = target_date(args)
+    window_start, window_end, window_label = target_window(args)
     agents = discover_agents(openclaw_dir, args.agent)
     total = Bucket()
     by_model: dict[str, Bucket] = {}
@@ -430,8 +468,8 @@ def collect_openclaw_snapshot(args: argparse.Namespace, prices: dict[str, dict[s
                     message = event.get("message") or {}
                     if message.get("role") != "assistant":
                         continue
-                    event_date = parse_event_date(event.get("timestamp") or message.get("timestamp"))
-                    if event_date != date:
+                    event_time = parse_event_datetime(event.get("timestamp") or message.get("timestamp"))
+                    if event_time is None or not (window_start <= event_time < window_end):
                         continue
 
                     usage = message.get("usage") or {}
@@ -461,7 +499,7 @@ def collect_openclaw_snapshot(args: argparse.Namespace, prices: dict[str, dict[s
 
     return Snapshot(
         generated_at=datetime.now(TZ_SHANGHAI).isoformat(timespec="seconds"),
-        date=date,
+        date=window_label,
         data_source="openclaw",
         source_detail=str(openclaw_dir),
         group_label="Agents",
@@ -511,8 +549,8 @@ def load_hermes_session_sources(hermes_home: Path, start: datetime, end: datetim
     try:
         con = sqlite3.connect(str(db))
         rows = con.execute(
-            "SELECT id, source FROM sessions WHERE started_at >= ? AND started_at < ?",
-            (start.timestamp(), end.timestamp()),
+            "SELECT id, source FROM sessions WHERE started_at < ? AND COALESCE(ended_at, ?) >= ?",
+            (end.timestamp(), end.timestamp(), start.timestamp()),
         ).fetchall()
         con.close()
     except Exception:
@@ -529,11 +567,13 @@ def load_hermes_session_billing(hermes_home: Path, start: datetime, end: datetim
         con.row_factory = sqlite3.Row
         rows = con.execute(
             """
-            SELECT id, source, estimated_cost_usd, actual_cost_usd
+            SELECT id, source, estimated_cost_usd, actual_cost_usd,
+                   COALESCE(input_tokens,0) + COALESCE(output_tokens,0) +
+                   COALESCE(cache_read_tokens,0) + COALESCE(cache_write_tokens,0) AS total_tokens
             FROM sessions
-            WHERE started_at >= ? AND started_at < ?
+            WHERE started_at < ? AND COALESCE(ended_at, ?) >= ?
             """,
-            (start.timestamp(), end.timestamp()),
+            (end.timestamp(), end.timestamp(), start.timestamp()),
         ).fetchall()
         con.close()
     except Exception:
@@ -550,6 +590,7 @@ def load_hermes_session_billing(hermes_home: Path, start: datetime, end: datetim
         billing[session_id] = {
             "source": str(row["source"] or ""),
             "cost_usd": cost_usd if cost_usd is not None and cost_usd > 0 else None,
+            "total_tokens": int(row["total_tokens"] or 0),
         }
     return billing
 
@@ -589,7 +630,8 @@ def add_usage_record(
 
 def collect_hermes_from_logs(
     hermes_home: Path,
-    date: str,
+    start: datetime,
+    end: datetime,
     prices: dict[str, dict[str, float]],
     usd_cny: float,
     total: Bucket,
@@ -597,7 +639,6 @@ def collect_hermes_from_logs(
     by_agent: dict[str, Bucket],
     unpriced: dict[str, Bucket],
 ) -> tuple[int, int]:
-    start, end = hermes_day_window(date)
     session_sources = load_hermes_session_sources(hermes_home, start, end)
     session_billing = load_hermes_session_billing(hermes_home, start, end)
     records: list[dict[str, Any]] = []
@@ -647,7 +688,7 @@ def collect_hermes_from_logs(
 
         cost_cny = None
         session_cost_usd = billing.get("cost_usd")
-        denominator = session_tokens.get(session_id, 0)
+        denominator = int(billing.get("total_tokens") or 0) or session_tokens.get(session_id, 0)
         if session_cost_usd is not None and denominator > 0:
             cost_cny = float(session_cost_usd) * usd_cny * (record["total_tokens"] / denominator)
 
@@ -673,7 +714,8 @@ def collect_hermes_from_logs(
 
 def collect_hermes_from_state_db(
     hermes_home: Path,
-    date: str,
+    start: datetime,
+    end: datetime,
     prices: dict[str, dict[str, float]],
     usd_cny: float,
     total: Bucket,
@@ -684,7 +726,6 @@ def collect_hermes_from_state_db(
     db = hermes_home / "state.db"
     if not db.exists():
         return 0, 0
-    start, end = hermes_day_window(date)
     try:
         con = sqlite3.connect(str(db))
         con.row_factory = sqlite3.Row
@@ -754,7 +795,7 @@ def collect_hermes_from_state_db(
 
 def collect_hermes_snapshot(args: argparse.Namespace, prices: dict[str, dict[str, float]]) -> Snapshot:
     hermes_home = Path(args.hermes_home).expanduser()
-    date = target_date(args)
+    window_start, window_end, window_label = target_window(args)
     total = Bucket()
     by_model: dict[str, Bucket] = {}
     by_agent: dict[str, Bucket] = {}
@@ -762,7 +803,8 @@ def collect_hermes_snapshot(args: argparse.Namespace, prices: dict[str, dict[str
 
     usage_records, priced_records = collect_hermes_from_logs(
         hermes_home,
-        date,
+        window_start,
+        window_end,
         prices,
         float(args.usd_cny),
         total,
@@ -774,7 +816,8 @@ def collect_hermes_snapshot(args: argparse.Namespace, prices: dict[str, dict[str
     if usage_records == 0:
         usage_records, priced_records = collect_hermes_from_state_db(
             hermes_home,
-            date,
+            window_start,
+            window_end,
             prices,
             float(args.usd_cny),
             total,
@@ -786,7 +829,7 @@ def collect_hermes_snapshot(args: argparse.Namespace, prices: dict[str, dict[str
 
     return Snapshot(
         generated_at=datetime.now(TZ_SHANGHAI).isoformat(timespec="seconds"),
-        date=date,
+        date=window_label,
         data_source="hermes",
         source_detail=source_detail,
         group_label="Hermes Sources",
@@ -818,6 +861,20 @@ def load_previous_state(state_file: Path) -> dict[str, Any] | None:
 def compare(snapshot: Snapshot, previous: dict[str, Any] | None, args: argparse.Namespace) -> AlertResult:
     if args.init_only:
         return AlertResult(status="initialized", should_alert=False, reason="baseline initialized")
+    if args.alert_mode == "total":
+        current_total = snapshot.total.cost_cny
+        should_alert = current_total > args.threshold_cny
+        return AlertResult(
+            status="alert" if should_alert else "ok",
+            should_alert=should_alert,
+            delta_cny=0.0,
+            previous_total_cny=None,
+            reason=(
+                f"current window {current_total:.2f} CNY > threshold {args.threshold_cny:.2f} CNY"
+                if should_alert
+                else f"current window {current_total:.2f} CNY <= threshold {args.threshold_cny:.2f} CNY"
+            ),
+        )
     if not previous:
         return AlertResult(status="initialized", should_alert=False, reason="no previous snapshot")
     if previous.get("date") != snapshot.date:
@@ -867,17 +924,19 @@ def top_rows(title: str, buckets: dict[str, Bucket], limit: int = 8) -> list[str
 
 
 def render_report(snapshot: Snapshot, result: AlertResult, args: argparse.Namespace) -> str:
+    window_label = "Date" if args.period == "day" else "Window"
+    threshold_label = "Window threshold" if args.alert_mode == "total" else "Threshold"
     lines = [
         "# Token Cost Guard",
         "",
         f"- Status: {result.status.upper()}",
-        f"- Date: {snapshot.date}",
+        f"- {window_label}: {snapshot.date}",
         f"- Data source: {snapshot.data_source} ({snapshot.source_detail})",
         f"- Generated at: {snapshot.generated_at}",
         f"- Current known cost: {snapshot.total.cost_cny:.2f} CNY",
         f"- Current known tokens: {format_number(snapshot.total.total_tokens)}",
         f"- Usage records: {snapshot.usage_records} total, {snapshot.priced_records} priced",
-        f"- Threshold: {args.threshold_cny:.2f} CNY"
+        f"- {threshold_label}: {args.threshold_cny:.2f} CNY"
         + (f" or {args.threshold_percent:.1f}%" if args.threshold_percent > 0 else ""),
     ]
     if result.previous_total_cny is not None:
@@ -905,7 +964,8 @@ def render_report(snapshot: Snapshot, result: AlertResult, args: argparse.Namesp
 def write_report(report: str, snapshot: Snapshot, reports_dir: Path) -> Path:
     reports_dir.mkdir(parents=True, exist_ok=True)
     stamp = snapshot.generated_at.replace(":", "").replace("+", "_").replace("-", "")
-    path = reports_dir / f"token-cost-{snapshot.date}-{stamp}.md"
+    safe_label = re.sub(r"[^0-9A-Za-z_.+-]+", "_", snapshot.date)
+    path = reports_dir / f"token-cost-{safe_label}-{stamp}.md"
     path.write_text(report, encoding="utf-8")
     return path
 
@@ -943,7 +1003,7 @@ def run_once(args: argparse.Namespace, prices: dict[str, dict[str, float]]) -> i
     elif result.should_alert or args.always_report or args.init_only:
         print(report)
         print(f"Report: {report_path}")
-    else:
+    elif not args.quiet_ok:
         print(
             f"OK: current={snapshot.total.cost_cny:.2f} CNY, "
             f"delta={result.delta_cny:.2f} CNY, report={report_path}"
