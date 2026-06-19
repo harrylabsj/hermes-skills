@@ -18,6 +18,12 @@
       "skills": [
         "second-brain-aphorism"
       ]
+    },
+    {
+      "title": "Agent Operations",
+      "skills": [
+        "openclaw-token-cost-guard"
+      ]
     }
   ]
 }

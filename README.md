@@ -34,3 +34,4 @@ The check fails on user-local absolute paths, private config files, non-placehol
 | `jd-shopping` | JD.com search, comparison, review analysis, SKU selection, and safe cart preparation before checkout/payment. | `hermes skills install <owner>/hermes-skills/skills/jd-shopping` |
 | `find-her` | Respectful dating strategy, profile improvement, channel planning, and practical relationship coaching. | `hermes skills install <owner>/hermes-skills/skills/find-her` |
 | `second-brain-aphorism` | Generate grounded Chinese reflections, aphorisms, quote-card lines, and daily thoughts from second-brain context. | `hermes skills install <owner>/hermes-skills/skills/second-brain-aphorism` |
+| `openclaw-token-cost-guard` | Realtime OpenClaw token cost monitoring with threshold alert reports. | `hermes skills install <owner>/hermes-skills/skills/openclaw-token-cost-guard` |
