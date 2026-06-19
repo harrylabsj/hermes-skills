@@ -1,9 +1,9 @@
 ---
-name: openclaw-token-cost-guard
+name: token-cost-guard
 description: Monitor OpenClaw token usage and model cost from session logs, compare the current run with the previous snapshot, and send an alert report when cost growth exceeds a threshold. Use when users ask to track OpenClaw token spend, calculate realtime token cost, detect spending spikes, monitor DeepSeek/Kimi/GPT model usage, or set up cost alerts for OpenClaw agents.
 ---
 
-# OpenClaw Token Cost Guard
+# Token Cost Guard
 
 Use this skill to compute OpenClaw token costs from local session logs and warn when spend has increased too much since the previous run.
 
@@ -12,7 +12,7 @@ Use this skill to compute OpenClaw token costs from local session logs and warn 
 Run a one-shot check for today:
 
 ```bash
-python3 skills/openclaw-token-cost-guard/scripts/token_cost_guard.py --threshold-cny 20
+python3 skills/token-cost-guard/scripts/token_cost_guard.py --threshold-cny 20
 ```
 
 When installed by Hermes and running from the skill directory:
@@ -24,19 +24,19 @@ python3 scripts/token_cost_guard.py --threshold-cny 20
 Initialize a baseline without alerting:
 
 ```bash
-python3 skills/openclaw-token-cost-guard/scripts/token_cost_guard.py --init-only
+python3 skills/token-cost-guard/scripts/token_cost_guard.py --init-only
 ```
 
 Run every 60 seconds:
 
 ```bash
-python3 skills/openclaw-token-cost-guard/scripts/token_cost_guard.py --watch-interval 60 --threshold-cny 20
+python3 skills/token-cost-guard/scripts/token_cost_guard.py --watch-interval 60 --threshold-cny 20
 ```
 
 Send an alert through OpenClaw when the threshold is exceeded:
 
 ```bash
-python3 skills/openclaw-token-cost-guard/scripts/token_cost_guard.py \
+python3 skills/token-cost-guard/scripts/token_cost_guard.py \
   --threshold-cny 20 \
   --send-openclaw \
   --channel feishu \
@@ -62,7 +62,7 @@ Environment variables:
 
 - `OPENCLAW_STATE_DIR` or `OPENCLAW_HOME`: override the OpenClaw state directory.
 - `OPENCLAW_TOKEN_COST_GUARD_STATE_DIR`: override state/report storage.
-- `HERMES_STATE_DIR` or `HERMES_DATA_DIR`: when present, default state/report storage goes under `<that-dir>/openclaw-token-cost-guard`.
+- `HERMES_STATE_DIR` or `HERMES_DATA_DIR`: when present, default state/report storage goes under `<that-dir>/token-cost-guard`.
 - `OPENCLAW_TOKEN_COST_THRESHOLD_CNY`: default absolute alert threshold.
 - `OPENCLAW_TOKEN_COST_THRESHOLD_PERCENT`: default percent alert threshold.
 

@@ -1,7 +1,7 @@
 {
-  "name": "openclaw-token-cost-guard",
+  "name": "token-cost-guard",
   "slug": "token-cost-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "summary": "Realtime OpenClaw token cost monitor with threshold-based alert reports.",
   "description": "Monitor OpenClaw agent session token usage, price DeepSeek/Kimi/GPT model calls, compare current cost against the previous snapshot, and generate or send an alert when spend exceeds a configured threshold.",
   "keywords": [
@@ -26,6 +26,6 @@
     "main": "scripts/token_cost_guard.py",
     "description": "Stdlib-only CLI for computing OpenClaw token costs and alerting on cost deltas."
   },
-  "author": "openclaw",
+  "author": "harrylabsj",
   "license": "MIT"
 }

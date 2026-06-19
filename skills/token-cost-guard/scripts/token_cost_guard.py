@@ -150,7 +150,7 @@ def default_state_dir(openclaw_dir: Path) -> Path:
     for env_name in ("HERMES_STATE_DIR", "HERMES_DATA_DIR"):
         value = os.environ.get(env_name)
         if value:
-            return Path(value).expanduser() / "openclaw-token-cost-guard"
+            return Path(value).expanduser() / "token-cost-guard"
     return openclaw_dir / "token-cost-guard"
 
 

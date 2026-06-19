@@ -1,8 +1,0 @@
-interface:
-  display_name: "OpenClaw Token Cost Guard"
-  short_description: "Monitor token spend and alert on spikes"
-  default_prompt: "Use $openclaw-token-cost-guard to check today's OpenClaw token spend and alert if cost jumped."
-
-policy:
-  allow_implicit_invocation: true
-
