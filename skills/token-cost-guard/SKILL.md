@@ -47,7 +47,8 @@ python3 skills/token-cost-guard/scripts/token_cost_guard.py \
   --period previous-hour \
   --alert-mode total \
   --threshold-cny 10 \
-  --quiet-ok
+  --quiet-ok \
+  --alert-exit-zero
 ```
 
 Send an alert through OpenClaw when the threshold is exceeded:
@@ -69,6 +70,7 @@ python3 ~/.openclaw/skills/token-cost-guard/scripts/token_cost_guard.py \
   --alert-mode total \
   --threshold-cny 10 \
   --quiet-ok \
+  --alert-exit-zero \
   --send-openclaw \
   --channel feishu \
   --target <feishu-open-id-or-chat-id>
@@ -94,6 +96,7 @@ Hermes hourly script alert example:
   - percentage delta is greater than `--threshold-percent`
 - With `--alert-mode total`, alerts when the current time window's known cost is greater than `--threshold-cny`; this is the recommended mode for "last hour exceeded budget" cron jobs.
 - With `--quiet-ok`, prints nothing when the run is OK; this is useful for Hermes `cron --no-agent --script` delivery.
+- With `--alert-exit-zero`, returns exit code 0 even when an alert fires; use it for cron jobs so a successful alert is not marked as a failed run.
 - Writes Chinese Markdown reports to the selected runtime's `token-cost-guard/reports/`.
 
 ## Hermes Compatibility

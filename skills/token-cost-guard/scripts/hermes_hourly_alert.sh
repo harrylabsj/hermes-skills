@@ -19,4 +19,5 @@ exec python3 "$SKILL_SCRIPT" \
   --alert-mode total \
   --threshold-cny "$THRESHOLD_CNY" \
   --quiet-ok \
+  --alert-exit-zero \
   "$@"

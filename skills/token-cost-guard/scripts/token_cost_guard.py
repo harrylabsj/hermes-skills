@@ -236,6 +236,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-state-write", action="store_true", help="Do not update state file.")
     parser.add_argument("--always-report", action="store_true", help="Print report even when no alert fires.")
     parser.add_argument("--quiet-ok", action="store_true", help="Print nothing when status is OK and no alert fires.")
+    parser.add_argument("--alert-exit-zero", action="store_true", help="Exit 0 even when an alert fires. Useful for cron jobs where alerts are expected outcomes.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     parser.add_argument("--watch-interval", type=float, help="Run continuously every N seconds.")
     parser.add_argument("--send-openclaw", action="store_true", help="Send alert via `openclaw message send`.")
@@ -1028,7 +1029,9 @@ def run_once(args: argparse.Namespace, prices: dict[str, dict[str, float]]) -> i
     if args.send_openclaw and (result.should_alert or args.send_always):
         send_openclaw(report, args)
 
-    return 2 if result.should_alert else 0
+    if result.should_alert and not args.alert_exit_zero:
+        return 2
+    return 0
 
 
 def main() -> int:
