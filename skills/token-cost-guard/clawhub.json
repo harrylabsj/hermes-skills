@@ -1,8 +1,8 @@
 {
   "name": "token-cost-guard",
   "slug": "token-cost-guard",
-  "version": "0.1.2",
-  "description": "Token Cost Guard - realtime token spend monitor and threshold alert skill for OpenClaw, Hermes, Codex, and ClawHub-style agent ecosystems.",
+  "version": "0.2.0",
+  "description": "Token Cost Guard - realtime token spend monitor and threshold alert skill that reads the active OpenClaw or Hermes runtime's own usage records.",
   "keywords": [
     "openclaw",
     "hermes",

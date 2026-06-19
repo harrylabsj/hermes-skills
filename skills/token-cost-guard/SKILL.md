@@ -1,11 +1,11 @@
 ---
 name: token-cost-guard
-description: Monitor OpenClaw token usage and model cost from session logs, compare the current run with the previous snapshot, and send an alert report when cost growth exceeds a threshold. Use when users ask to track OpenClaw token spend, calculate realtime token cost, detect spending spikes, monitor DeepSeek/Kimi/GPT model usage, or set up cost alerts for OpenClaw agents.
+description: Monitor agent token usage and model cost from the active ecosystem's own records, compare the current run with the previous snapshot, and send an alert report when cost growth exceeds a threshold. In OpenClaw it reads OpenClaw session logs; in Hermes agent it reads Hermes logs/state.db instead of OpenClaw. Use when users ask to track token spend, calculate realtime token cost, detect spending spikes, monitor DeepSeek/Kimi/GPT model usage, or set up cost alerts for OpenClaw or Hermes agents.
 ---
 
 # Token Cost Guard
 
-Use this skill to compute OpenClaw token costs from local session logs and warn when spend has increased too much since the previous run.
+Use this skill to compute agent token costs from the current runtime's own usage records and warn when spend has increased too much since the previous run.
 
 ## Quick Start
 
@@ -13,6 +13,13 @@ Run a one-shot check for today:
 
 ```bash
 python3 skills/token-cost-guard/scripts/token_cost_guard.py --threshold-cny 20
+```
+
+Force a source when needed:
+
+```bash
+python3 skills/token-cost-guard/scripts/token_cost_guard.py --source hermes --threshold-cny 20
+python3 skills/token-cost-guard/scripts/token_cost_guard.py --source openclaw --threshold-cny 20
 ```
 
 When installed by Hermes and running from the skill directory:
@@ -45,14 +52,16 @@ python3 skills/token-cost-guard/scripts/token_cost_guard.py \
 
 ## Behavior
 
-- Reads `~/.openclaw/agents/*/sessions/*.jsonl`.
+- `--source auto` selects Hermes when running under Hermes (`HERMES_*` environment or `~/.hermes/skills` path), otherwise OpenClaw.
+- OpenClaw source reads `~/.openclaw/agents/*/sessions/*.jsonl`.
+- Hermes source reads `~/.hermes/logs/agent.log*` API-call usage lines, then falls back to `~/.hermes/state.db` session aggregates when logs have no matching records.
 - Defaults to today's Asia/Shanghai date.
-- Computes cost by agent and model.
-- Compares current total cost with the previous snapshot in `~/.openclaw/token-cost-guard/state.json`.
+- Computes cost by model and by runtime group (`Agents` for OpenClaw, `Hermes Sources` such as `cron`, `weixin`, or `cli` for Hermes).
+- Compares current total cost with the previous snapshot in the selected runtime's `token-cost-guard/state.json`.
 - Alerts when either condition is true:
   - absolute cost delta is greater than `--threshold-cny`
   - percentage delta is greater than `--threshold-percent`
-- Writes Markdown reports to `~/.openclaw/token-cost-guard/reports/`.
+- Writes Markdown reports to the selected runtime's `token-cost-guard/reports/`.
 
 ## Hermes Compatibility
 
@@ -61,10 +70,12 @@ The bundled script is stdlib-only and can run under Codex, OpenClaw, Hermes, cro
 Environment variables:
 
 - `OPENCLAW_STATE_DIR` or `OPENCLAW_HOME`: override the OpenClaw state directory.
+- `HERMES_HOME`: override the Hermes home directory; defaults to `~/.hermes`.
 - `OPENCLAW_TOKEN_COST_GUARD_STATE_DIR`: override state/report storage.
-- `HERMES_STATE_DIR` or `HERMES_DATA_DIR`: when present, default state/report storage goes under `<that-dir>/token-cost-guard`.
+- `HERMES_STATE_DIR` or `HERMES_DATA_DIR`: when present and source is Hermes, default state/report storage goes under `<that-dir>/token-cost-guard`.
 - `OPENCLAW_TOKEN_COST_THRESHOLD_CNY`: default absolute alert threshold.
 - `OPENCLAW_TOKEN_COST_THRESHOLD_PERCENT`: default percent alert threshold.
+- `TOKEN_COST_GUARD_USD_CNY` or `TOKEN_REPORT_USD_CNY`: USD/CNY conversion for Hermes `state.db` fallback costs.
 
 Hermes tap metadata lives in `skill.json`; ClawHub/OpenClaw marketplace metadata lives in `clawhub.json`.
 

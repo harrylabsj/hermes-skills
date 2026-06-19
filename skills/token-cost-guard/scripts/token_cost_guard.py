@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""OpenClaw token cost monitor with threshold alerts.
+"""Agent token cost monitor with threshold alerts.
 
-The script is intentionally stdlib-only so it can run from cron, OpenClaw
-jobs, or a regular shell without installing dependencies.
+The script is intentionally stdlib-only so it can run from cron, OpenClaw,
+Hermes, or a regular shell without installing dependencies.
 """
 
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import os
+import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -25,6 +28,17 @@ except Exception:  # pragma: no cover - Python < 3.9 fallback
 
 
 TZ_SHANGHAI = ZoneInfo("Asia/Shanghai") if ZoneInfo else timezone(timedelta(hours=8))
+
+
+HERMES_API_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),(?P<ms>\d{3})\s+"
+    r"\S+\s+\[(?P<session>[^\]]+)\]\s+[^:]+:\s+API call #\d+:\s+"
+    r"model=(?P<model>\S+)\s+provider=(?P<provider>\S+)\s+"
+    r"in=(?P<input>\d+)\s+out=(?P<output>\d+)\s+total=(?P<total>\d+)"
+    r"(?:.*?\scache=(?P<cache_read>\d+)/(?P<prompt_for_cache>\d+)\s+\([^)]*\))?"
+)
+
+INCLUDED_PROVIDERS = {"openai-codex"}
 
 
 DEFAULT_PRICES_CNY = {
@@ -75,8 +89,8 @@ class Bucket:
     total_tokens: int = 0
     cost_cny: float = 0.0
 
-    def add(self, miss: int, hit: int, output: int, total: int, cost_cny: float) -> None:
-        self.calls += 1
+    def add(self, miss: int, hit: int, output: int, total: int, cost_cny: float, calls: int = 1) -> None:
+        self.calls += max(1, int(calls or 1))
         self.cache_miss_input += miss
         self.cache_hit_input += hit
         self.output += output
@@ -98,6 +112,9 @@ class Bucket:
 class Snapshot:
     generated_at: str
     date: str
+    data_source: str
+    source_detail: str
+    group_label: str
     total: Bucket
     by_model: dict[str, Bucket]
     by_agent: dict[str, Bucket]
@@ -109,9 +126,11 @@ class Snapshot:
         return {
             "generated_at": self.generated_at,
             "date": self.date,
+            "data_source": self.data_source,
+            "source_detail": self.source_detail,
             "total": self.total.as_dict(),
             "by_model": buckets_to_dict(self.by_model),
-            "by_agent": buckets_to_dict(self.by_agent),
+            "by_group": buckets_to_dict(self.by_agent),
             "unpriced": buckets_to_dict(self.unpriced),
             "usage_records": self.usage_records,
             "priced_records": self.priced_records,
@@ -143,14 +162,38 @@ def default_openclaw_dir() -> Path:
     return Path.home() / ".openclaw"
 
 
-def default_state_dir(openclaw_dir: Path) -> Path:
+def default_hermes_home() -> Path:
+    return Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))).expanduser()
+
+
+def invoked_from_hermes() -> bool:
+    for env_name in ("HERMES_HOME", "HERMES_STATE_DIR", "HERMES_DATA_DIR", "HERMES_SESSION_ID", "HERMES_PROFILE"):
+        if os.environ.get(env_name):
+            return True
+    try:
+        return ".hermes" in Path(__file__).resolve().parts
+    except Exception:
+        return False
+
+
+def resolve_source(source: str) -> str:
+    if source != "auto":
+        return source
+    if invoked_from_hermes():
+        return "hermes"
+    return "openclaw"
+
+
+def default_state_dir(source: str, openclaw_dir: Path, hermes_home: Path) -> Path:
     value = os.environ.get("OPENCLAW_TOKEN_COST_GUARD_STATE_DIR")
     if value:
         return Path(value).expanduser()
-    for env_name in ("HERMES_STATE_DIR", "HERMES_DATA_DIR"):
-        value = os.environ.get(env_name)
-        if value:
-            return Path(value).expanduser() / "token-cost-guard"
+    if source == "hermes":
+        for env_name in ("HERMES_STATE_DIR", "HERMES_DATA_DIR"):
+            value = os.environ.get(env_name)
+            if value:
+                return Path(value).expanduser() / "token-cost-guard"
+        return hermes_home / "token-cost-guard"
     return openclaw_dir / "token-cost-guard"
 
 
@@ -158,17 +201,25 @@ def parse_args() -> argparse.Namespace:
     default_threshold = float(os.environ.get("OPENCLAW_TOKEN_COST_THRESHOLD_CNY", "20"))
     default_percent = float(os.environ.get("OPENCLAW_TOKEN_COST_THRESHOLD_PERCENT", "0"))
     openclaw_dir = default_openclaw_dir()
-    state_dir = default_state_dir(openclaw_dir)
+    hermes_home = default_hermes_home()
 
-    parser = argparse.ArgumentParser(description="Monitor OpenClaw token cost and alert on spikes.")
+    parser = argparse.ArgumentParser(description="Monitor agent token cost and alert on spikes.")
+    parser.add_argument("--source", choices=("auto", "openclaw", "hermes"), default="auto")
     parser.add_argument("--openclaw-dir", default=str(openclaw_dir))
+    parser.add_argument("--hermes-home", default=str(hermes_home))
     parser.add_argument("--date", help="Date to inspect in YYYY-MM-DD, default today in Asia/Shanghai.")
     parser.add_argument("--agent", action="append", help="Agent id to include. Repeatable. Defaults to all agents with sessions.")
     parser.add_argument("--pricing-file", help="JSON price override file.")
+    parser.add_argument(
+        "--usd-cny",
+        type=float,
+        default=float(os.environ.get("TOKEN_COST_GUARD_USD_CNY", os.environ.get("TOKEN_REPORT_USD_CNY", "6.81"))),
+        help="USD/CNY conversion for Hermes state.db costs. Defaults to TOKEN_COST_GUARD_USD_CNY, TOKEN_REPORT_USD_CNY, or 6.81.",
+    )
     parser.add_argument("--threshold-cny", type=float, default=default_threshold)
     parser.add_argument("--threshold-percent", type=float, default=default_percent)
-    parser.add_argument("--state-file", default=str(state_dir / "state.json"))
-    parser.add_argument("--reports-dir", default=str(state_dir / "reports"))
+    parser.add_argument("--state-file")
+    parser.add_argument("--reports-dir")
     parser.add_argument("--init-only", action="store_true", help="Write baseline without alerting.")
     parser.add_argument("--no-state-write", action="store_true", help="Do not update state file.")
     parser.add_argument("--always-report", action="store_true", help="Print report even when no alert fires.")
@@ -180,7 +231,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target", help="OpenClaw message target/chat id.")
     parser.add_argument("--account", help="Optional OpenClaw message account id.")
     parser.add_argument("--send-dry-run", action="store_true", help="Pass --dry-run to openclaw message send.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.resolved_source = resolve_source(args.source)
+    state_dir = default_state_dir(args.resolved_source, Path(args.openclaw_dir).expanduser(), Path(args.hermes_home).expanduser())
+    if not args.state_file:
+        args.state_file = str(state_dir / "state.json")
+    if not args.reports_dir:
+        args.reports_dir = str(state_dir / "reports")
+    return args
 
 
 def target_date(args: argparse.Namespace) -> str:
@@ -256,7 +314,16 @@ def usage_int(usage: dict[str, Any], *keys: str) -> int:
     return 0
 
 
-def compute_cost_cny(model: str, miss: int, hit: int, output: int, prices: dict[str, dict[str, float]]) -> float | None:
+def compute_cost_cny(
+    model: str,
+    miss: int,
+    hit: int,
+    output: int,
+    prices: dict[str, dict[str, float]],
+    provider: str | None = None,
+) -> float | None:
+    if (provider or "").lower() in INCLUDED_PROVIDERS:
+        return 0.0
     price = prices.get(model)
     if price is None:
         return None
@@ -267,7 +334,7 @@ def compute_cost_cny(model: str, miss: int, hit: int, output: int, prices: dict[
     ) / 1_000_000
 
 
-def collect_snapshot(args: argparse.Namespace, prices: dict[str, dict[str, float]]) -> Snapshot:
+def collect_openclaw_snapshot(args: argparse.Namespace, prices: dict[str, dict[str, float]]) -> Snapshot:
     openclaw_dir = Path(args.openclaw_dir).expanduser()
     date = target_date(args)
     agents = discover_agents(openclaw_dir, args.agent)
@@ -315,7 +382,7 @@ def collect_snapshot(args: argparse.Namespace, prices: dict[str, dict[str, float
                         continue
 
                     usage_records += 1
-                    cost_cny = compute_cost_cny(model, miss, hit, output, prices)
+                    cost_cny = compute_cost_cny(model, miss, hit, output, prices, message.get("provider"))
                     if cost_cny is None:
                         unpriced.setdefault(model, Bucket()).add(miss, hit, output, total_tokens, 0.0)
                         continue
@@ -328,6 +395,9 @@ def collect_snapshot(args: argparse.Namespace, prices: dict[str, dict[str, float
     return Snapshot(
         generated_at=datetime.now(TZ_SHANGHAI).isoformat(timespec="seconds"),
         date=date,
+        data_source="openclaw",
+        source_detail=str(openclaw_dir),
+        group_label="Agents",
         total=total,
         by_model=by_model,
         by_agent=by_agent,
@@ -335,6 +405,265 @@ def collect_snapshot(args: argparse.Namespace, prices: dict[str, dict[str, float
         usage_records=usage_records,
         priced_records=priced_records,
     )
+
+
+def hermes_day_window(date: str) -> tuple[datetime, datetime]:
+    start_date = datetime.fromisoformat(date).date()
+    start = datetime(start_date.year, start_date.month, start_date.day, tzinfo=TZ_SHANGHAI)
+    return start, start + timedelta(days=1)
+
+
+def iter_hermes_log_lines(log_dir: Path):
+    for path in sorted(log_dir.glob("agent.log*"), key=lambda item: item.name):
+        try:
+            if path.suffix == ".gz":
+                with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as handle:
+                    yield from handle
+            else:
+                with path.open("r", encoding="utf-8", errors="ignore") as handle:
+                    yield from handle
+        except Exception:
+            continue
+
+
+def infer_hermes_source(session_id: str | None) -> str:
+    session = str(session_id or "")
+    if session.startswith("cron_") or session.startswith("session_cron_"):
+        return "cron"
+    if session.startswith("session_"):
+        return "legacy-session"
+    if re.match(r"^\d{8}_", session):
+        return "cli"
+    return "unknown"
+
+
+def load_hermes_session_sources(hermes_home: Path, start: datetime, end: datetime) -> dict[str, str]:
+    db = hermes_home / "state.db"
+    if not db.exists():
+        return {}
+    try:
+        con = sqlite3.connect(str(db))
+        rows = con.execute(
+            "SELECT id, source FROM sessions WHERE started_at >= ? AND started_at < ?",
+            (start.timestamp(), end.timestamp()),
+        ).fetchall()
+        con.close()
+    except Exception:
+        return {}
+    return {str(session_id): str(source or "") for session_id, source in rows if session_id}
+
+
+def add_usage_record(
+    *,
+    group: str,
+    provider: str | None,
+    model: str | None,
+    miss: int,
+    hit: int,
+    output: int,
+    total_tokens: int,
+    calls: int,
+    cost_cny: float | None,
+    prices: dict[str, dict[str, float]],
+    total: Bucket,
+    by_model: dict[str, Bucket],
+    by_agent: dict[str, Bucket],
+    unpriced: dict[str, Bucket],
+) -> bool:
+    normalized_model = normalize_model(provider, model)
+    if not normalized_model:
+        return False
+    if not (miss or hit or output or total_tokens):
+        return False
+    if cost_cny is None:
+        cost_cny = compute_cost_cny(normalized_model, miss, hit, output, prices, provider)
+    if cost_cny is None:
+        unpriced.setdefault(normalized_model, Bucket()).add(miss, hit, output, total_tokens, 0.0, calls=calls)
+        return False
+    total.add(miss, hit, output, total_tokens, cost_cny, calls=calls)
+    by_agent.setdefault(group, Bucket()).add(miss, hit, output, total_tokens, cost_cny, calls=calls)
+    by_model.setdefault(normalized_model, Bucket()).add(miss, hit, output, total_tokens, cost_cny, calls=calls)
+    return True
+
+
+def collect_hermes_from_logs(
+    hermes_home: Path,
+    date: str,
+    prices: dict[str, dict[str, float]],
+    total: Bucket,
+    by_model: dict[str, Bucket],
+    by_agent: dict[str, Bucket],
+    unpriced: dict[str, Bucket],
+) -> tuple[int, int]:
+    start, end = hermes_day_window(date)
+    session_sources = load_hermes_session_sources(hermes_home, start, end)
+    usage_records = 0
+    priced_records = 0
+    for line in iter_hermes_log_lines(hermes_home / "logs"):
+        match = HERMES_API_RE.search(line)
+        if not match:
+            continue
+        try:
+            ts = datetime.strptime(match.group("ts"), "%Y-%m-%d %H:%M:%S").replace(tzinfo=TZ_SHANGHAI)
+        except Exception:
+            continue
+        if not (start <= ts < end):
+            continue
+
+        session_id = match.group("session")
+        provider = match.group("provider") or "unknown"
+        model = match.group("model") or "unknown"
+        prompt = int(match.group("input") or 0)
+        output = int(match.group("output") or 0)
+        total_tokens = int(match.group("total") or (prompt + output))
+        hit = int(match.group("cache_read") or 0)
+        miss = max(0, prompt - hit)
+        group = session_sources.get(session_id) or infer_hermes_source(session_id)
+
+        usage_records += 1
+        if add_usage_record(
+            group=group,
+            provider=provider,
+            model=model,
+            miss=miss,
+            hit=hit,
+            output=output,
+            total_tokens=total_tokens,
+            calls=1,
+            cost_cny=None,
+            prices=prices,
+            total=total,
+            by_model=by_model,
+            by_agent=by_agent,
+            unpriced=unpriced,
+        ):
+            priced_records += 1
+    return usage_records, priced_records
+
+
+def collect_hermes_from_state_db(
+    hermes_home: Path,
+    date: str,
+    prices: dict[str, dict[str, float]],
+    usd_cny: float,
+    total: Bucket,
+    by_model: dict[str, Bucket],
+    by_agent: dict[str, Bucket],
+    unpriced: dict[str, Bucket],
+) -> tuple[int, int]:
+    db = hermes_home / "state.db"
+    if not db.exists():
+        return 0, 0
+    start, end = hermes_day_window(date)
+    try:
+        con = sqlite3.connect(str(db))
+        con.row_factory = sqlite3.Row
+        rows = con.execute(
+            """
+            SELECT id, source, model, billing_provider,
+                   COALESCE(input_tokens,0) AS input_tokens,
+                   COALESCE(output_tokens,0) AS output_tokens,
+                   COALESCE(cache_read_tokens,0) AS cache_read_tokens,
+                   COALESCE(cache_write_tokens,0) AS cache_write_tokens,
+                   COALESCE(api_call_count,0) AS api_call_count,
+                   estimated_cost_usd,
+                   actual_cost_usd
+            FROM sessions
+            WHERE started_at >= ? AND started_at < ?
+              AND (COALESCE(input_tokens,0) + COALESCE(output_tokens,0) +
+                   COALESCE(cache_read_tokens,0) + COALESCE(cache_write_tokens,0)) > 0
+            """,
+            (start.timestamp(), end.timestamp()),
+        ).fetchall()
+        con.close()
+    except Exception:
+        return 0, 0
+
+    usage_records = 0
+    priced_records = 0
+    for row in rows:
+        provider = row["billing_provider"] or "unknown"
+        model = row["model"] or "unknown"
+        miss = int(row["input_tokens"] or 0) + int(row["cache_write_tokens"] or 0)
+        hit = int(row["cache_read_tokens"] or 0)
+        output = int(row["output_tokens"] or 0)
+        total_tokens = miss + hit + output
+        calls = int(row["api_call_count"] or 0) or 1
+        group = row["source"] or infer_hermes_source(row["id"])
+
+        cost_usd = row["actual_cost_usd"]
+        if cost_usd is None:
+            cost_usd = row["estimated_cost_usd"]
+        cost_cny = None
+        try:
+            if cost_usd is not None and float(cost_usd) > 0:
+                cost_cny = float(cost_usd) * usd_cny
+        except Exception:
+            cost_cny = None
+
+        usage_records += 1
+        if add_usage_record(
+            group=group,
+            provider=provider,
+            model=model,
+            miss=miss,
+            hit=hit,
+            output=output,
+            total_tokens=total_tokens,
+            calls=calls,
+            cost_cny=cost_cny,
+            prices=prices,
+            total=total,
+            by_model=by_model,
+            by_agent=by_agent,
+            unpriced=unpriced,
+        ):
+            priced_records += 1
+    return usage_records, priced_records
+
+
+def collect_hermes_snapshot(args: argparse.Namespace, prices: dict[str, dict[str, float]]) -> Snapshot:
+    hermes_home = Path(args.hermes_home).expanduser()
+    date = target_date(args)
+    total = Bucket()
+    by_model: dict[str, Bucket] = {}
+    by_agent: dict[str, Bucket] = {}
+    unpriced: dict[str, Bucket] = {}
+
+    usage_records, priced_records = collect_hermes_from_logs(hermes_home, date, prices, total, by_model, by_agent, unpriced)
+    source_detail = f"{hermes_home}/logs/agent.log*"
+    if usage_records == 0:
+        usage_records, priced_records = collect_hermes_from_state_db(
+            hermes_home,
+            date,
+            prices,
+            float(args.usd_cny),
+            total,
+            by_model,
+            by_agent,
+            unpriced,
+        )
+        source_detail = f"{hermes_home}/state.db sessions"
+
+    return Snapshot(
+        generated_at=datetime.now(TZ_SHANGHAI).isoformat(timespec="seconds"),
+        date=date,
+        data_source="hermes",
+        source_detail=source_detail,
+        group_label="Hermes Sources",
+        total=total,
+        by_model=by_model,
+        by_agent=by_agent,
+        unpriced=unpriced,
+        usage_records=usage_records,
+        priced_records=priced_records,
+    )
+
+
+def collect_snapshot(args: argparse.Namespace, prices: dict[str, dict[str, float]]) -> Snapshot:
+    if args.resolved_source == "hermes":
+        return collect_hermes_snapshot(args, prices)
+    return collect_openclaw_snapshot(args, prices)
 
 
 def load_previous_state(state_file: Path) -> dict[str, Any] | None:
@@ -404,6 +733,7 @@ def render_report(snapshot: Snapshot, result: AlertResult, args: argparse.Namesp
         "",
         f"- Status: {result.status.upper()}",
         f"- Date: {snapshot.date}",
+        f"- Data source: {snapshot.data_source} ({snapshot.source_detail})",
         f"- Generated at: {snapshot.generated_at}",
         f"- Current known cost: {snapshot.total.cost_cny:.2f} CNY",
         f"- Current known tokens: {format_number(snapshot.total.total_tokens)}",
@@ -422,7 +752,7 @@ def render_report(snapshot: Snapshot, result: AlertResult, args: argparse.Namesp
     lines.append(f"- Reason: {result.reason}")
     lines.append("")
     lines.extend(top_rows("Top Models", snapshot.by_model))
-    lines.extend(top_rows("Top Agents", snapshot.by_agent))
+    lines.extend(top_rows(f"Top {snapshot.group_label}", snapshot.by_agent))
 
     if snapshot.unpriced:
         lines.extend(["## Unpriced Models", "", "| Model | Calls | Total tokens |", "|---|---:|---:|"])
