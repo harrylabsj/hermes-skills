@@ -860,7 +860,7 @@ def load_previous_state(state_file: Path) -> dict[str, Any] | None:
 
 def compare(snapshot: Snapshot, previous: dict[str, Any] | None, args: argparse.Namespace) -> AlertResult:
     if args.init_only:
-        return AlertResult(status="initialized", should_alert=False, reason="baseline initialized")
+        return AlertResult(status="initialized", should_alert=False, reason="已初始化基线")
     if args.alert_mode == "total":
         current_total = snapshot.total.cost_cny
         should_alert = current_total > args.threshold_cny
@@ -870,15 +870,15 @@ def compare(snapshot: Snapshot, previous: dict[str, Any] | None, args: argparse.
             delta_cny=0.0,
             previous_total_cny=None,
             reason=(
-                f"current window {current_total:.2f} CNY > threshold {args.threshold_cny:.2f} CNY"
+                f"当前窗口费用 {current_total:.2f} 元 > 阈值 {args.threshold_cny:.2f} 元"
                 if should_alert
-                else f"current window {current_total:.2f} CNY <= threshold {args.threshold_cny:.2f} CNY"
+                else f"当前窗口费用 {current_total:.2f} 元 <= 阈值 {args.threshold_cny:.2f} 元"
             ),
         )
     if not previous:
-        return AlertResult(status="initialized", should_alert=False, reason="no previous snapshot")
+        return AlertResult(status="initialized", should_alert=False, reason="没有上一份快照，已建立基线")
     if previous.get("date") != snapshot.date:
-        return AlertResult(status="initialized", should_alert=False, reason="new date baseline")
+        return AlertResult(status="initialized", should_alert=False, reason="新的日期或时间窗口，已建立基线")
 
     previous_total = float((previous.get("total") or {}).get("cost_cny") or 0.0)
     current_total = snapshot.total.cost_cny
@@ -890,9 +890,9 @@ def compare(snapshot: Snapshot, previous: dict[str, Any] | None, args: argparse.
     should_alert = absolute_alert or percent_alert
     reason_parts = []
     if absolute_alert:
-        reason_parts.append(f"delta {delta:.2f} CNY > threshold {args.threshold_cny:.2f} CNY")
+        reason_parts.append(f"费用增量 {delta:.2f} 元 > 阈值 {args.threshold_cny:.2f} 元")
     if percent_alert:
-        reason_parts.append(f"delta {percent:.1f}% > threshold {args.threshold_percent:.1f}%")
+        reason_parts.append(f"费用增幅 {percent:.1f}% > 阈值 {args.threshold_percent:.1f}%")
 
     return AlertResult(
         status="alert" if should_alert else "ok",
@@ -900,7 +900,7 @@ def compare(snapshot: Snapshot, previous: dict[str, Any] | None, args: argparse.
         delta_cny=delta,
         delta_percent=percent,
         previous_total_cny=previous_total,
-        reason="; ".join(reason_parts) if reason_parts else "within threshold",
+        reason="；".join(reason_parts) if reason_parts else "未超过阈值",
     )
 
 
@@ -909,7 +909,7 @@ def format_number(value: int) -> str:
 
 
 def top_rows(title: str, buckets: dict[str, Bucket], limit: int = 8) -> list[str]:
-    rows = [f"## {title}", "", "| Name | Calls | Total tokens | Cost CNY |", "|---|---:|---:|---:|"]
+    rows = [f"## {title}", "", "| 名称 | 调用次数 | 总 Tokens | 费用（元） |", "|---|---:|---:|---:|"]
     visible = [
         (name, bucket)
         for name, bucket in buckets.items()
@@ -918,42 +918,58 @@ def top_rows(title: str, buckets: dict[str, Bucket], limit: int = 8) -> list[str
     for name, bucket in sorted(visible, key=lambda item: item[1].cost_cny, reverse=True)[:limit]:
         rows.append(f"| {name} | {bucket.calls} | {format_number(bucket.total_tokens)} | {bucket.cost_cny:.2f} |")
     if len(rows) == 4:
-        rows.append("| none | 0 | 0 | 0.00 |")
+        rows.append("| 无 | 0 | 0 | 0.00 |")
     rows.append("")
     return rows
 
 
+def status_zh(status: str) -> str:
+    return {
+        "alert": "报警",
+        "ok": "正常",
+        "initialized": "已初始化",
+    }.get(status, status)
+
+
+def group_title_zh(group_label: str) -> str:
+    if group_label == "Agents":
+        return "Agent 费用排行"
+    if group_label == "Hermes Sources":
+        return "Hermes 来源费用排行"
+    return f"{group_label} 费用排行"
+
+
 def render_report(snapshot: Snapshot, result: AlertResult, args: argparse.Namespace) -> str:
-    window_label = "Date" if args.period == "day" else "Window"
-    threshold_label = "Window threshold" if args.alert_mode == "total" else "Threshold"
+    window_label = "日期" if args.period == "day" else "时间窗口"
+    threshold_label = "窗口阈值" if args.alert_mode == "total" else "阈值"
     lines = [
-        "# Token Cost Guard",
+        "# Token 费用守卫报告",
         "",
-        f"- Status: {result.status.upper()}",
+        f"- 状态: {status_zh(result.status)}",
         f"- {window_label}: {snapshot.date}",
-        f"- Data source: {snapshot.data_source} ({snapshot.source_detail})",
-        f"- Generated at: {snapshot.generated_at}",
-        f"- Current known cost: {snapshot.total.cost_cny:.2f} CNY",
-        f"- Current known tokens: {format_number(snapshot.total.total_tokens)}",
-        f"- Usage records: {snapshot.usage_records} total, {snapshot.priced_records} priced",
-        f"- {threshold_label}: {args.threshold_cny:.2f} CNY"
-        + (f" or {args.threshold_percent:.1f}%" if args.threshold_percent > 0 else ""),
+        f"- 数据源: {snapshot.data_source} ({snapshot.source_detail})",
+        f"- 生成时间: {snapshot.generated_at}",
+        f"- 当前已知费用: {snapshot.total.cost_cny:.2f} 元",
+        f"- 当前已知 Tokens: {format_number(snapshot.total.total_tokens)}",
+        f"- 用量记录: 共 {snapshot.usage_records} 条，已计价 {snapshot.priced_records} 条",
+        f"- {threshold_label}: {args.threshold_cny:.2f} 元"
+        + (f" 或 {args.threshold_percent:.1f}%" if args.threshold_percent > 0 else ""),
     ]
     if result.previous_total_cny is not None:
         lines.extend(
             [
-                f"- Previous known cost: {result.previous_total_cny:.2f} CNY",
-                f"- Delta: {result.delta_cny:.2f} CNY"
+                f"- 上次已知费用: {result.previous_total_cny:.2f} 元",
+                f"- 费用增量: {result.delta_cny:.2f} 元"
                 + (f" ({result.delta_percent:.1f}%)" if result.delta_percent is not None else ""),
             ]
         )
-    lines.append(f"- Reason: {result.reason}")
+    lines.append(f"- 判断原因: {result.reason}")
     lines.append("")
-    lines.extend(top_rows("Top Models", snapshot.by_model))
-    lines.extend(top_rows(f"Top {snapshot.group_label}", snapshot.by_agent))
+    lines.extend(top_rows("模型费用排行", snapshot.by_model))
+    lines.extend(top_rows(group_title_zh(snapshot.group_label), snapshot.by_agent))
 
     if snapshot.unpriced:
-        lines.extend(["## Unpriced Models", "", "| Model | Calls | Total tokens |", "|---|---:|---:|"])
+        lines.extend(["## 未定价模型", "", "| 模型 | 调用次数 | 总 Tokens |", "|---|---:|---:|"])
         for name, bucket in sorted(snapshot.unpriced.items(), key=lambda item: item[1].total_tokens, reverse=True):
             lines.append(f"| {name} | {bucket.calls} | {format_number(bucket.total_tokens)} |")
         lines.append("")
@@ -1002,11 +1018,11 @@ def run_once(args: argparse.Namespace, prices: dict[str, dict[str, float]]) -> i
         print(json.dumps({"result": result.__dict__, "snapshot": snapshot.as_state(), "report_path": str(report_path)}, ensure_ascii=False, indent=2))
     elif result.should_alert or args.always_report or args.init_only:
         print(report)
-        print(f"Report: {report_path}")
+        print(f"报告文件: {report_path}")
     elif not args.quiet_ok:
         print(
-            f"OK: current={snapshot.total.cost_cny:.2f} CNY, "
-            f"delta={result.delta_cny:.2f} CNY, report={report_path}"
+            f"正常: 当前费用={snapshot.total.cost_cny:.2f} 元，"
+            f"增量={result.delta_cny:.2f} 元，报告={report_path}"
         )
 
     if args.send_openclaw and (result.should_alert or args.send_always):

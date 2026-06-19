@@ -5,7 +5,7 @@ description: Monitor agent token usage and model cost from the active ecosystem'
 
 # Token Cost Guard
 
-Use this skill to compute agent token costs from the current runtime's own usage records and warn when spend has increased too much since the previous run.
+Use this skill to compute agent token costs from the current runtime's own usage records and warn in Chinese reports when spend has increased too much since the previous run.
 
 ## Quick Start
 
@@ -94,7 +94,7 @@ Hermes hourly script alert example:
   - percentage delta is greater than `--threshold-percent`
 - With `--alert-mode total`, alerts when the current time window's known cost is greater than `--threshold-cny`; this is the recommended mode for "last hour exceeded budget" cron jobs.
 - With `--quiet-ok`, prints nothing when the run is OK; this is useful for Hermes `cron --no-agent --script` delivery.
-- Writes Markdown reports to the selected runtime's `token-cost-guard/reports/`.
+- Writes Chinese Markdown reports to the selected runtime's `token-cost-guard/reports/`.
 
 ## Hermes Compatibility
 

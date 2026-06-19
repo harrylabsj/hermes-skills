@@ -1,8 +1,8 @@
 {
   "name": "token-cost-guard",
   "slug": "token-cost-guard",
-  "version": "0.2.2",
-  "description": "Token Cost Guard - realtime token spend monitor and threshold alert skill that reads the active OpenClaw or Hermes runtime's own usage records, supports hourly windows, and prefers native billing fields when present.",
+  "version": "0.2.3",
+  "description": "Token Cost Guard - realtime token spend monitor and Chinese threshold alert report skill that reads the active OpenClaw or Hermes runtime's own usage records, supports hourly windows, and prefers native billing fields when present.",
   "keywords": [
     "openclaw",
     "hermes",
