@@ -35,3 +35,4 @@ The check fails on user-local absolute paths, private config files, non-placehol
 | `find-her` | Respectful dating strategy, profile improvement, channel planning, and practical relationship coaching. | `hermes skills install <owner>/hermes-skills/skills/find-her` |
 | `second-brain-aphorism` | Generate grounded Chinese reflections, aphorisms, quote-card lines, and daily thoughts from second-brain context. | `hermes skills install <owner>/hermes-skills/skills/second-brain-aphorism` |
 | `token-cost-guard` | Runtime-aware token cost monitoring for OpenClaw and Hermes with threshold alert reports. | `hermes skills install <owner>/hermes-skills/skills/token-cost-guard` |
+| `hermes-tweet` | Use Hermes Tweet for X/Twitter search, reads, approved actions, monitors, media workflows, and social automation through Xquik. | `hermes skills install <owner>/hermes-skills/skills/hermes-tweet` |
