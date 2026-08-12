@@ -17,6 +17,15 @@ hermes skills search 京东
 hermes skills install <owner>/hermes-skills/skills/jd-shopping
 ```
 
+The `hermes-tweet` skill depends on the Hermes Tweet plugin. Install and enable
+the plugin on the Hermes runtime host before installing the skill:
+
+```bash
+hermes plugins install Xquik-dev/hermes-tweet
+hermes plugins enable hermes-tweet
+hermes skills install <owner>/hermes-skills/skills/hermes-tweet
+```
+
 ## Privacy Gate
 
 Before publishing any skill to GitHub, ClawHub, Hermes, or another public registry, run:
